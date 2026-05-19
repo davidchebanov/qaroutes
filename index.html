@@ -15,11 +15,17 @@
 :root{
   --bg:var(--tg-theme-bg-color,#F4F0EB);
   --bg2:var(--tg-theme-secondary-bg-color,#E9E4DC);
-  --card:#FDFAF5;
+  --card:var(--tg-theme-secondary-bg-color,#FDFAF5);
   --text:var(--tg-theme-text-color,#18160F);
   --muted:var(--tg-theme-hint-color,#7A756E);
   --a:#D14B2A;--bl:#1A6FBF;--gr:#3D8B3D;
-  --brd:rgba(24,22,15,0.09);
+  --brd:rgba(128,128,128,0.15);
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --card:var(--tg-theme-secondary-bg-color,#2A2A2A);
+    --brd:rgba(255,255,255,0.1);
+  }
 }
 body{font-family:'Onest',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding-bottom:40px}
 .hdr{padding:18px 16px 6px;text-align:center}
