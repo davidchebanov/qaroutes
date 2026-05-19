@@ -106,9 +106,38 @@ main{padding:12px 14px 24px}
 input[type=range]{width:100%;-webkit-appearance:none;height:3px;background:var(--brd);border-radius:2px;outline:none}
 input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--a);cursor:pointer;box-shadow:0 1px 4px rgba(209,75,42,.3)}
 .ybtn{flex:1;min-width:calc(50% - 4px);background:var(--text);border:none;border-radius:12px;padding:11px 8px;font-family:'Onest',sans-serif;font-size:12px;font-weight:500;color:var(--bg);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;text-decoration:none}
+
+.sub-gate{position:fixed;inset:0;background:var(--bg);z-index:999;display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-end;padding:28px 20px calc(env(safe-area-inset-bottom,0px) + 28px)}
+.sub-gate-logo{display:flex;align-items:center;gap:7px;margin-bottom:16px}
+.sub-logo-dot{width:8px;height:8px;border-radius:50%;background:var(--a);animation:blink 2.4s ease-in-out infinite;flex-shrink:0}
+.sub-logo-text{font-family:'Unbounded',sans-serif;font-size:20px;font-weight:700;color:var(--text);letter-spacing:-.5px}
+.sub-gate-tagline{font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:20px;font-weight:300}
+.sub-gate-features{display:flex;flex-direction:column;gap:8px;margin-bottom:20px;width:100%}
+.sub-feat{font-size:12px;color:var(--text);background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:9px 12px;font-weight:400}
+.sub-gate-divider{width:100%;height:1px;background:var(--brd);margin-bottom:16px}
+.sub-gate-sub-text{font-size:11px;color:var(--muted);margin-bottom:14px;font-weight:300;line-height:1.5}
+.sub-gate-btn{background:var(--a);color:#fff;border:none;border-radius:14px;padding:15px;font-family:'Unbounded',sans-serif;font-size:13px;font-weight:700;cursor:pointer;text-decoration:none;display:block;width:100%;margin-bottom:8px;letter-spacing:-.3px;text-align:center}
+.sub-gate-check{background:transparent;color:var(--muted);border:1.5px solid var(--brd);border-radius:14px;padding:12px;font-family:'Onest',sans-serif;font-size:12px;font-weight:500;cursor:pointer;width:100%;text-align:center}
 </style>
 </head>
 <body>
+
+<div class="sub-gate" id="subGate" style="display:none">
+  <div class="sub-gate-logo">
+    <div class="sub-logo-dot"></div>
+    <div class="sub-logo-text">мои маршруты</div>
+  </div>
+  <div class="sub-gate-tagline">личная карта москвы<br>614 мест, которые я проверила сама</div>
+  <div class="sub-gate-features">
+    <div class="sub-feat">🗺 маршруты под настроение</div>
+    <div class="sub-feat">📍 привязка к метро и радиусу</div>
+    <div class="sub-feat">↺ замена отдельных мест</div>
+  </div>
+  <div class="sub-gate-divider"></div>
+  <div class="sub-gate-sub-text">бот работает на базе канала — подпишись, чтобы открыть</div>
+  <a class="sub-gate-btn" href="https://t.me/qaroutes" target="_blank">подписаться на канал</a>
+  <button class="sub-gate-check" onclick="checkSub()">уже подписан →</button>
+</div>
 <div class="hdr">
   <div class="logo"><div class="logo-dot"></div><div class="logo-t">мои маршруты</div></div>
   <div class="sub">614 мест &middot; личная база</div>
@@ -347,6 +376,49 @@ function pickCluster(pool,cfg){
 }
 
 // ── swap single place ─────────────────────────────────────────────
+
+function updateRouteAfterSwap(){
+  if(!last || !last._picked) return;
+  var picked = last._picked;
+
+  // update yandex map link
+  if(picked.length >= 2){
+    document.getElementById('yMapBtn').href =
+      'https://yandex.ru/maps/?rtext=' +
+      picked.map(function(p){return p.la+','+p.lo;}).join('~') +
+      '&rtt=pd';
+    document.getElementById('yMapBtn').style.display = 'flex';
+  }
+
+  // update spread badge
+  var spread = Math.round(maxSpread(picked));
+  var spreadKm = Math.round(spread/100)/10;
+  var rbs = document.getElementById('rBs');
+  if(rbs){
+    // find and update the km badge
+    var badges = rbs.querySelectorAll('.rb');
+    var updated = false;
+    badges.forEach(function(b){
+      if(b.textContent.indexOf('км') !== -1){
+        b.textContent = '~' + spreadKm + ' км';
+        updated = true;
+      }
+    });
+    // if no km badge yet — add one
+    if(!updated && spreadKm > 0){
+      var span = document.createElement('span');
+      span.className = 'rb';
+      span.style.background = 'var(--bg2)';
+      span.style.color = 'var(--muted)';
+      span.textContent = '~' + spreadKm + ' км';
+      rbs.appendChild(span);
+    }
+  }
+
+  // update last._m spread
+  if(last._m) last._m.spread = spread;
+}
+
 function swapPlace(idx, btn){
   if(!last||!last._picked) return;
   btn.classList.add('spinning');
@@ -406,14 +478,9 @@ function swapPlace(idx, btn){
     var mx=raw.match(/\{[\s\S]*\}/); 
     var stop = mx ? JSON.parse(mx[0]) : {name:newPlace.n, detail:newPlace.d, metro:(newPlace.metro||[])[0]||'', walk:null};
     last._picked = newPicked;
-    // update this stop in last.stops
     if(last.stops && last.stops[idx]) last.stops[idx] = stop;
-    // re-render just this stop
     renderStop(idx, stop, btn.parentNode);
-    // update yandex map link
-    if(last._picked.length>=2){
-      document.getElementById('yMapBtn').href='https://yandex.ru/maps/?rtext='+last._picked.map(function(p){return p.la+','+p.lo;}).join('~')+'&rtt=pd';
-    }
+    updateRouteAfterSwap();
   })
   .catch(function(){
     // fallback: just swap without rewriting
@@ -421,6 +488,7 @@ function swapPlace(idx, btn){
     last._picked = newPicked;
     if(last.stops && last.stops[idx]) last.stops[idx] = stop;
     renderStop(idx, stop, btn.parentNode);
+    updateRouteAfterSwap();
   })
   .finally(function(){
     btn.classList.remove('spinning'); btn.textContent='↺ заменить';
@@ -545,6 +613,20 @@ document.getElementById('shareBtn').addEventListener('click',function(){
   if(navigator.share){navigator.share({text:txt});}
   else{navigator.clipboard.writeText(txt).then(function(){alert('\u0441\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d\u043e!');});}
 });
+
+// ── subscription gate ─────────────────────────────────────────
+function showGate(){ document.getElementById('subGate').style.display='flex'; }
+function hideGate(){ document.getElementById('subGate').style.display='none'; }
+function checkSub(){
+  hideGate();
+  try{ sessionStorage.setItem('sub_ok','1'); }catch(e){}
+}
+function initSubGate(){
+  if(!tg || !tg.initData || tg.initData === '') return;
+  try{ if(sessionStorage.getItem('sub_ok')) return; }catch(e){}
+  showGate();
+}
+initSubGate();
 </script>
 </body>
 </html>
