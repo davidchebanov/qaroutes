@@ -1,75 +1,87 @@
-import os, logging, threading
+"""
+Мои маршруты — Telegram bot
+Хостинг: Render (Web Service, free tier)
+"""
+import os, time, logging, threading, urllib.request
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
-logging.basicConfig(level=logging.INFO)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram.ext import Application, CommandHandler, ContextTypes
+
+logging.basicConfig(
+    format="%(asctime)s %(levelname)s %(message)s",
+    level=logging.INFO,
+)
+logging.getLogger("httpx").setLevel(logging.WARNING)   # не засорять логи
+log = logging.getLogger("qaroutes")
 
 BOT_TOKEN  = os.environ["BOT_TOKEN"]
 WEBAPP_URL = os.environ["WEBAPP_URL"]
-CHANNEL    = "@qaroutes"
+PORT       = int(os.environ.get("PORT", 10000))
+SELF_URL   = os.environ.get("RENDER_EXTERNAL_URL")     # Render задаёт сам
 
-# ── фиктивный веб-сервер чтобы Render не ругался ────────────────
-class Handler(BaseHTTPRequestHandler):
+
+# ── 1. заглушка на порт: Render требует открытый порт у Web Service ──
+class Ping(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
         self.end_headers()
-        self.wfile.write(b"ok")
-    def log_message(self, *args):
-        pass  # не засорять логи
+        self.wfile.write(b"qaroutes bot is alive")
 
-def run_server():
-    port = int(os.environ.get("PORT", 10000))
-    HTTPServer(("0.0.0.0", port), Handler).serve_forever()
+    def log_message(self, *a):
+        pass
 
-threading.Thread(target=run_server, daemon=True).start()
 
-# ── бот ─────────────────────────────────────────────────────────
-async def is_subscribed(bot, user_id):
-    try:
-        m = await bot.get_chat_member(CHANNEL, user_id)
-        return m.status in ("member", "administrator", "creator")
-    except Exception as e:
-        logging.warning(f"check failed: {e}")
-        return False
+def serve():
+    HTTPServer(("0.0.0.0", PORT), Ping).serve_forever()
 
-async def show_gate(update, context):
-    kb = [
-        [InlineKeyboardButton("📍 подписаться на канал", url="https://t.me/qaroutes")],
-        [InlineKeyboardButton("✓ уже подписан", callback_data="check")],
-    ]
-    text = "привет!\n\nэтот бот строит маршруты по москве на основе личной карты канала мои маршруты.\n\nчтобы открыть — подпишись на канал 👇"
-    if update.message:
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
-    elif update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
-async def show_app(update, context):
-    kb = [[InlineKeyboardButton("🗺 создать маршрут", web_app=WebAppInfo(url=WEBAPP_URL))]]
-    text = "всё готово — нажми кнопку и составляй маршрут ✦"
-    if update.message:
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
-    elif update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+threading.Thread(target=serve, daemon=True).start()
+log.info(f"HTTP keep-alive server on :{PORT}")
 
+
+# ── 2. самопинг раз в 10 минут — не даёт сервису заснуть ────────────
+def keep_awake():
+    if not SELF_URL:
+        log.warning("RENDER_EXTERNAL_URL не задан — самопинг выключен")
+        return
+    while True:
+        time.sleep(600)
+        try:
+            urllib.request.urlopen(SELF_URL, timeout=20).read()
+            log.info("self-ping ok")
+        except Exception as e:
+            log.warning(f"self-ping failed: {e}")
+
+
+threading.Thread(target=keep_awake, daemon=True).start()
+
+
+# ── 3. бот ──────────────────────────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await is_subscribed(context.bot, update.effective_user.id):
-        await show_app(update, context)
-    else:
-        await show_gate(update, context)
+    kb = [[InlineKeyboardButton(
+        "🗺 создать маршрут",
+        web_app=WebAppInfo(url=WEBAPP_URL),
+    )]]
+    await update.message.reply_text(
+        "привет!\n\n"
+        "я собираю маршруты по москве из личной карты канала — "
+        "632 проверенных места: кофе, бары, галереи, парки, театры и не только.\n\n"
+        "нажми кнопку ниже ✦",
+        reply_markup=InlineKeyboardMarkup(kb),
+    )
 
-async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    if await is_subscribed(context.bot, update.callback_query.from_user.id):
-        await show_app(update, context)
-    else:
-        await update.callback_query.answer(
-            "не вижу подписки — подпишись и нажми снова",
-            show_alert=True
-        )
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "/start — открыть генератор маршрутов\n\nканал: @qaroutes"
+    )
+
 
 if __name__ == "__main__":
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(check, pattern="^check$"))
+    app.add_handler(CommandHandler("help", help_cmd))
+    log.info("bot started, polling…")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
