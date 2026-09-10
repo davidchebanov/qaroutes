@@ -275,9 +275,9 @@ var CATS = [
 ];
 
 var DUR = [
-  {label:'на час',             hint:'пешком, один район',   maxD:850,   fill:16},
-  {label:'на несколько часов', hint:'пешком между точками', maxD:2000,  fill:50},
-  {label:'на весь день',       hint:'по городу',            maxD:12000, fill:100},
+  {label:'на час',             hint:'пешком, один район',   maxD:1100,  target:700,  fill:16},
+  {label:'на несколько часов', hint:'пешком между точками', maxD:2600,  target:2200, fill:50},
+  {label:'на весь день',       hint:'по городу',            maxD:13000, target:7000, fill:100},
 ];
 
 var sc = {}, metro = [], dur = 0, pts = 3, last = null;
@@ -465,11 +465,12 @@ function pickCluster(pool,cfg){
   // сиды: у метро — ближайшие к станции, иначе случайные по всей базе
   var seeds;
   if(anchorLa!==null){
+    // ближайшие 30 к станции, из них случайные 16 — чтобы «другой» давал другое
     seeds=pool.slice().sort(function(a,b){
       return hav(anchorLa,anchorLo,a.la,a.lo)-hav(anchorLa,anchorLo,b.la,b.lo);
-    }).slice(0,14);
+    }).slice(0,30).sort(function(){return Math.random()-.5;}).slice(0,16);
   }else{
-    seeds=pool.slice().sort(function(){return Math.random()-.5;}).slice(0,18);
+    seeds=pool.slice().sort(function(){return Math.random()-.5;}).slice(0,22);
   }
 
   // лестница бюджетов: жёсткий → мягче → совсем мягкий
@@ -482,21 +483,32 @@ function pickCluster(pool,cfg){
       var cl=growCluster(seeds[si],pool,cats,ptsN,maxD);
       if(!cl||cl.length<Math.min(2,ptsN)) continue;
       var ordered=orderRoute(cl,anchorLa,anchorLo);
-      // цена = длина пути + штраф за недобор точек + штраф за удаление от метро
-      var score=pathLen(ordered)+(ptsN-cl.length)*3000;
+      // цель — попасть в масштаб прогулки, а не сжать всё в один двор
+      var L=pathLen(ordered);
+      var score=Math.abs(L-cfg.target)+(ptsN-cl.length)*3000;
+      if(L<cfg.target*0.35) score+=(cfg.target*0.35-L)*1.2;   // слишком кучно — скучно
       if(anchorLa!==null) score+=hav(anchorLa,anchorLo,ordered[0].la,ordered[0].lo)*1.5;
       if(score<bestScore){bestScore=score;best=ordered;}
     }
 
+    // неполный набор принимаем только когда лестница исчерпана
+    if(best && best.length<ptsN && li<ladder.length-1) continue;
+
     if(best){
       if(li===1){window._usedFallback=true;window._fallbackReason='expanded';}
       if(li>=2){window._usedFallback=true;window._fallbackReason='citywide';}
+      if(best.length<ptsN){window._usedFallback=true;window._fallbackReason='fewplaces';}
+      // БАГ 2: кластер компактный, но далеко от выбранной станции
+      if(anchorLa!==null){
+        var dAnchor=hav(anchorLa,anchorLo,best[0].la,best[0].lo);
+        if(dAnchor>2500){window._usedFallback=true;window._fallbackReason='far';}
+      }
       return best;
     }
   }
 
   // страховка: просто ближайшие к якорю
-  window._usedFallback=true; window._fallbackReason='citywide';
+  window._usedFallback=true; window._fallbackReason=metro.length?'far':'citywide';
   var fb=pool.slice();
   if(anchorLa!==null) fb.sort(function(a,b){
     return hav(anchorLa,anchorLo,a.la,a.lo)-hav(anchorLa,anchorLo,b.la,b.lo);
@@ -692,12 +704,21 @@ function render(r){
   // disclaimer
   var disc=document.getElementById('disclaimer');
   var discTxt=document.getElementById('disclaimerTxt');
-  if(window._usedFallback && metro.length){
-    var stName=metro[0];
-    if(window._fallbackReason==='citywide'){
-      discTxt.textContent='рядом с «м. '+stName+'» совсем мало мест в этих категориях!';
+  if(window._usedFallback){
+    var stName=metro.length?metro[0]:'';
+    var rsn=window._fallbackReason;
+    if(rsn==='far'){
+      discTxt.textContent='рядом с «м. '+stName+'» в карте пока нет таких мест — собрали ближайший маршрут';
+    } else if(rsn==='fewplaces'){
+      discTxt.textContent='в этих категориях слишком мало мест рядом — точек в маршруте меньше, чем просили';
+    } else if(rsn==='citywide'){
+      discTxt.textContent=stName
+        ? 'рядом с «м. '+stName+'» совсем мало мест в этих категориях'
+        : 'подходящих мест рядом друг с другом мало — точки разбросаны по городу';
     } else {
-      discTxt.textContent='мест прямо у «м. '+stName+'» не хватило — расширили радиус поиска';
+      discTxt.textContent=stName
+        ? 'мест прямо у «м. '+stName+'» не хватило — расширили радиус поиска'
+        : 'мест рядом друг с другом не хватило — расширили радиус поиска';
     }
     disc.style.display='block';
   } else {
