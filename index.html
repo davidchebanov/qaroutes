@@ -275,9 +275,9 @@ var CATS = [
 ];
 
 var DUR = [
-  {label:'на час',             hint:'пешком, 1 район',       radiusM:800,   fill:16},
-  {label:'на несколько часов', hint:'метро + пешком',         radiusM:2000,  fill:50},
-  {label:'на весь день',       hint:'вся Москва',             radiusM:99999, fill:100},
+  {label:'на час',             hint:'пешком, один район',   maxD:850,   fill:16},
+  {label:'на несколько часов', hint:'пешком между точками', maxD:2000,  fill:50},
+  {label:'на весь день',       hint:'по городу',            maxD:12000, fill:100},
 ];
 
 var sc = {}, metro = [], dur = 0, pts = 3, last = null;
@@ -351,78 +351,160 @@ function setDur(d){
 document.getElementById('ptsR').addEventListener('input',function(){
   pts=+this.value;document.getElementById('ptsV').textContent=this.value;
 });
+// ── геометрия маршрута ────────────────────────────────────────────
+function pathLen(a){
+  var s=0; for(var i=1;i<a.length;i++) s+=hav(a[i-1].la,a[i-1].lo,a[i].la,a[i].lo);
+  return s;
+}
+function diameter(a){
+  var m=0;
+  for(var i=0;i<a.length;i++)for(var j=i+1;j<a.length;j++){
+    var d=hav(a[i].la,a[i].lo,a[j].la,a[j].lo); if(d>m)m=d;
+  }
+  return m;
+}
+
+// ── порядок обхода: ближайший сосед + 2-opt ──────────────────────
+function nnFrom(startIdx,a){
+  var left=a.slice(), route=[left.splice(startIdx,1)[0]];
+  while(left.length){
+    var cur=route[route.length-1], bi=0, bd=Infinity;
+    for(var i=0;i<left.length;i++){
+      var d=hav(cur.la,cur.lo,left[i].la,left[i].lo);
+      if(d<bd){bd=d;bi=i;}
+    }
+    route.push(left.splice(bi,1)[0]);
+  }
+  return route;
+}
+function twoOpt(r){
+  if(r.length<4) return r;
+  var improved=true, guard=0;
+  while(improved && guard++<40){
+    improved=false;
+    for(var i=1;i<r.length-1;i++)for(var k=i+1;k<r.length;k++){
+      var cand=r.slice(0,i).concat(r.slice(i,k+1).reverse(),r.slice(k+1));
+      if(pathLen(cand)<pathLen(r)-1){r=cand;improved=true;}
+    }
+  }
+  return r;
+}
+function orderRoute(a,anchorLa,anchorLo){
+  if(a.length<3) return a;
+  // если задано метро — стартуем от ближайшей к станции точки
+  if(anchorLa!==null&&anchorLa!==undefined){
+    var si=0,sd=Infinity;
+    for(var i=0;i<a.length;i++){
+      var d=hav(anchorLa,anchorLo,a[i].la,a[i].lo);
+      if(d<sd){sd=d;si=i;}
+    }
+    return twoOpt(nnFrom(si,a));
+  }
+  var best=null,bl=Infinity;
+  for(var s=0;s<a.length;s++){
+    var r=twoOpt(nnFrom(s,a)), l=pathLen(r);
+    if(l<bl){bl=l;best=r;}
+  }
+  return best;
+}
+
+// ── наращивание кластера: контроль ПОПАРНОГО разброса ────────────
+function growCluster(seed,pool,cats,ptsN,maxD){
+  var picked=[seed], used={}; used[seed.n]=1;
+  // кандидаты: всё в пределах maxD от seed (надмножество любого валидного кластера)
+  var near=pool.filter(function(p){
+    return !used[p.n] && hav(seed.la,seed.lo,p.la,p.lo)<=maxD;
+  });
+
+  function bestAddition(cand){
+    var best=null,bd=Infinity;
+    for(var i=0;i<cand.length;i++){
+      if(used[cand[i].n]) continue;
+      var d=diameter(picked.concat([cand[i]]));
+      if(d<bd){bd=d;best=cand[i];}
+    }
+    return (best&&bd<=maxD)?best:null;
+  }
+
+  // фаза 1: закрыть каждую выбранную категорию
+  var missing=cats.filter(function(c){return c!==seed.c;});
+  for(var m=0;m<missing.length;m++){
+    if(picked.length>=ptsN) break;
+    var add=bestAddition(near.filter(function(p){return p.c===missing[m];}));
+    if(!add) return null;              // в бюджет не влезает — кластер невалиден
+    picked.push(add); used[add.n]=1;
+  }
+
+  // фаза 2: добить до нужного числа, минимально раздувая разброс
+  while(picked.length<ptsN){
+    var a2=bestAddition(near);
+    if(!a2) break;
+    picked.push(a2); used[a2.n]=1;
+  }
+  return picked;
+}
+
+// ── подбор кластера: перебор сидов, выбор самого компактного ─────
 function pickCluster(pool,cfg){
   window._usedFallback=false;
   window._fallbackReason='';
-  // deduplicate by name within same category — keep all network branches but avoid picking same name twice
-  var arr=pool.slice().sort(function(){return Math.random()-.5;});
-  var radiusM=cfg.radiusM, cats=Object.keys(sc), picked=[], used={};
-  if(radiusM>=99999){
-    // guarantee 1 from each category first
-    cats.forEach(function(cat){
-      if(picked.length>=pts)return;
-      var cp=arr.filter(function(p){return p.c===cat&&!used[p.n];});
-      if(cp.length){picked.push(cp[0]);used[cp[0].n]=1;}
-    });
-    // fill remaining — prefer unrepresented categories
-    var coveredCats2={};picked.forEach(function(p){coveredCats2[p.c]=1;});
-    arr.forEach(function(p){if(picked.length<pts&&!used[p.n]&&!coveredCats2[p.c]){picked.push(p);used[p.n]=1;coveredCats2[p.c]=1;}});
-    arr.forEach(function(p){if(picked.length<pts&&!used[p.n]){picked.push(p);used[p.n]=1;}});
-    return picked;
-  }
+
+  var cats=Object.keys(sc);
+  var ptsN=Math.min(pts,pool.length);
+  if(!pool.length) return [];
+
+  // якорь
   var anchorLa=null,anchorLo=null;
   if(metro.length){
-    // use actual station coordinates as anchor, not centroid of places
     var mc=window._MC||{};
     for(var mi=0;mi<metro.length;mi++){
       if(mc[metro[mi]]){anchorLa=mc[metro[mi]][0];anchorLo=mc[metro[mi]][1];break;}
     }
-    // fallback: centroid of nearby places
-    if(anchorLa===null){
-      var nm=pool.filter(function(p){return p.metro&&p.metro.some(function(m){return metro.indexOf(m)!==-1;});});
-      if(nm.length){anchorLa=nm.reduce(function(s,p){return s+p.la;},0)/nm.length;anchorLo=nm.reduce(function(s,p){return s+p.lo;},0)/nm.length;}
-    }
   }
-  if(anchorLa===null&&arr.length){var seed=arr[Math.floor(Math.random()*Math.min(arr.length,30))];anchorLa=seed.la;anchorLo=seed.lo;}
-  if(anchorLa===null) return arr.slice(0,pts);
-  function filterR(r){return arr.filter(function(p){return p.la&&hav(anchorLa,anchorLo,p.la,p.lo)<=r;});}
-  var inR=filterR(radiusM);
-  if(inR.length<pts){inR=filterR(radiusM*2);if(inR.length>=pts){window._usedFallback=true;window._fallbackReason='expanded';}}
-  if(inR.length<pts){inR=arr;window._usedFallback=true;window._fallbackReason='citywide';}
-  // Step 1: guarantee 1 from each selected category
-  // If category not found in current radius — expand radius for THAT category only
-  cats.forEach(function(cat){
-    if(picked.length>=pts)return;
-    // try current radius first
-    var cp=inR.filter(function(p){return p.c===cat&&!used[p.n];});
-    // if nothing in radius — search entire pool for this category
-    if(!cp.length){
-      cp=arr.filter(function(p){return p.c===cat&&!used[p.n];});
-      if(cp.length) window._usedFallback=true;
-    }
-    cp.sort(function(a,b){return hav(anchorLa,anchorLo,a.la,a.lo)-hav(anchorLa,anchorLo,b.la,b.lo);});
-    if(cp.length){picked.push(cp[0]);used[cp[0].n]=1;}
-  });
 
-  // Step 2: fill remaining — prefer unrepresented categories first
-  var coveredCats={};
-  picked.forEach(function(p){coveredCats[p.c]=1;});
-  var remaining=inR.slice().sort(function(a,b){return hav(anchorLa,anchorLo,a.la,a.lo)-hav(anchorLa,anchorLo,b.la,b.lo);});
-  // first pass: only unrepresented categories
-  remaining.forEach(function(p){if(picked.length<pts&&!used[p.n]&&!coveredCats[p.c]){picked.push(p);used[p.n]=1;coveredCats[p.c]=1;}});
-  // second pass: any category if still need more
-  remaining.forEach(function(p){if(picked.length<pts&&!used[p.n]){picked.push(p);used[p.n]=1;}});
-  if(picked.length>2){
-    var sorted=[picked[0]],rem=picked.slice(1);
-    while(rem.length){
-      var last2=sorted[sorted.length-1];
-      rem.sort(function(a,b){return hav(last2.la,last2.lo,a.la,a.lo)-hav(last2.la,last2.lo,b.la,b.lo);});
-      sorted.push(rem.shift());
-    }
-    picked=sorted;
+  // сиды: у метро — ближайшие к станции, иначе случайные по всей базе
+  var seeds;
+  if(anchorLa!==null){
+    seeds=pool.slice().sort(function(a,b){
+      return hav(anchorLa,anchorLo,a.la,a.lo)-hav(anchorLa,anchorLo,b.la,b.lo);
+    }).slice(0,14);
+  }else{
+    seeds=pool.slice().sort(function(){return Math.random()-.5;}).slice(0,18);
   }
-  return picked;
+
+  // лестница бюджетов: жёсткий → мягче → совсем мягкий
+  var ladder=[cfg.maxD, cfg.maxD*1.7, cfg.maxD*2.8, 999999];
+
+  for(var li=0;li<ladder.length;li++){
+    var maxD=ladder[li], best=null, bestScore=Infinity;
+
+    for(var si=0;si<seeds.length;si++){
+      var cl=growCluster(seeds[si],pool,cats,ptsN,maxD);
+      if(!cl||cl.length<Math.min(2,ptsN)) continue;
+      var ordered=orderRoute(cl,anchorLa,anchorLo);
+      // цена = длина пути + штраф за недобор точек + штраф за удаление от метро
+      var score=pathLen(ordered)+(ptsN-cl.length)*3000;
+      if(anchorLa!==null) score+=hav(anchorLa,anchorLo,ordered[0].la,ordered[0].lo)*1.5;
+      if(score<bestScore){bestScore=score;best=ordered;}
+    }
+
+    if(best){
+      if(li===1){window._usedFallback=true;window._fallbackReason='expanded';}
+      if(li>=2){window._usedFallback=true;window._fallbackReason='citywide';}
+      return best;
+    }
+  }
+
+  // страховка: просто ближайшие к якорю
+  window._usedFallback=true; window._fallbackReason='citywide';
+  var fb=pool.slice();
+  if(anchorLa!==null) fb.sort(function(a,b){
+    return hav(anchorLa,anchorLo,a.la,a.lo)-hav(anchorLa,anchorLo,b.la,b.lo);
+  });
+  else fb.sort(function(){return Math.random()-.5;});
+  return orderRoute(fb.slice(0,ptsN),anchorLa,anchorLo);
 }
+
 
 // ── swap single place ─────────────────────────────────────────────
 
@@ -440,7 +522,7 @@ function updateRouteAfterSwap(){
   }
 
   // update spread badge
-  var spread = Math.round(maxSpread(picked));
+  var spread = Math.round(pathLen(picked));
   var spreadKm = Math.round(spread/100)/10;
   var rbs = document.getElementById('rBs');
   if(rbs){
@@ -493,12 +575,14 @@ function swapPlace(idx, btn){
   // prefer nearby places using anchor from last route
   var anchorLa = currentPick ? currentPick.la : null;
   var anchorLo = currentPick ? currentPick.lo : null;
-  if(anchorLa){
-    pool.sort(function(a,b){ return hav(anchorLa,anchorLo,a.la,a.lo)-hav(anchorLa,anchorLo,b.la,b.lo); });
-    // take random from top 10 closest so it's not always the same
-    pool = pool.slice(0, Math.min(10, pool.length));
-  }
-  pool = pool.sort(function(){ return Math.random()-.5; });
+  var others = last._picked.filter(function(p,i){ return i!==idx; });
+  var budget = DUR[dur].maxD;
+  var fits = pool.filter(function(p){ return diameter(others.concat([p])) <= budget; });
+  if(fits.length) pool = fits;
+  else if(anchorLa) pool.sort(function(a,b){
+    return diameter(others.concat([a])) - diameter(others.concat([b]));
+  });
+  pool = pool.slice(0, Math.min(12, pool.length)).sort(function(){ return Math.random()-.5; });
 
   if(!pool.length){
     btn.classList.remove('spinning'); btn.textContent='\u21ba заменить'; return;
@@ -507,6 +591,8 @@ function swapPlace(idx, btn){
   var newPlace = pool[0];
   var newPicked = last._picked.slice();
   newPicked[idx] = newPlace;
+  newPicked = orderRoute(newPicked, null, null);
+  idx = newPicked.indexOf(newPlace);
 
   // ask Claude to rewrite just this stop's description in context
   var sys = 'ты — бот канала «мои маршруты». пишешь строчными, живо, с иронией.'
@@ -570,7 +656,7 @@ function gen(){
     DB.filter(function(p){return cats.indexOf(p.c)!==-1;}).sort(function(){return Math.random()-.5;})
       .forEach(function(p){if(picked.length<pts&&!used2[p.n]){picked.push(p);used2[p.n]=1;}});
   }
-  var spread=Math.round(maxSpread(picked));
+  var spread=Math.round(pathLen(picked));
   var sys='ты — бот канала «мои маршруты». пишешь строчными, живо, с иронией, как автор лайфстайл-канала для зумеров.'
     +' формат: '+cfg.label+'. разброс точек: ~'+Math.round(spread/100)/10+' км.'
     +' составь маршрут из предложенных мест в логичном порядке обхода.'
