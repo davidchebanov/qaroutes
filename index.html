@@ -371,11 +371,21 @@ function nnFrom(startIdx,a){
     var cur=route[route.length-1], bi=0, bd=Infinity;
     for(var i=0;i<left.length;i++){
       var d=hav(cur.la,cur.lo,left[i].la,left[i].lo);
+      if(left[i].c===cur.c) d+=(window._catPenalty||400);
       if(d<bd){bd=d;bi=i;}
     }
     route.push(left.splice(bi,1)[0]);
   }
   return route;
+}
+// сколько раз подряд идут места одной рубрики
+function sameCatRuns(r){
+  var n=0; for(var i=1;i<r.length;i++) if(r[i].c===r[i-1].c) n++;
+  return n;
+}
+// цена маршрута: длина пути + штраф за одинаковые рубрики подряд
+function routeCost(r){
+  return pathLen(r)+sameCatRuns(r)*(window._catPenalty||400);
 }
 function twoOpt(r){
   if(r.length<4) return r;
@@ -384,7 +394,7 @@ function twoOpt(r){
     improved=false;
     for(var i=1;i<r.length-1;i++)for(var k=i+1;k<r.length;k++){
       var cand=r.slice(0,i).concat(r.slice(i,k+1).reverse(),r.slice(k+1));
-      if(pathLen(cand)<pathLen(r)-1){r=cand;improved=true;}
+      if(routeCost(cand)<routeCost(r)-1){r=cand;improved=true;}
     }
   }
   return r;
@@ -402,15 +412,26 @@ function orderRoute(a,anchorLa,anchorLo){
   }
   var best=null,bl=Infinity;
   for(var s=0;s<a.length;s++){
-    var r=twoOpt(nnFrom(s,a)), l=pathLen(r);
+    var r=twoOpt(nnFrom(s,a)), l=routeCost(r);
     if(l<bl){bl=l;best=r;}
   }
   return best;
 }
 
+// ── квоты: сколько точек на рубрику ──────────────────────────────
+function catQuotas(cats,n){
+  var base=Math.floor(n/cats.length), rem=n%cats.length;
+  var shuffled=cats.slice().sort(function(){return Math.random()-.5;});
+  var q={};
+  cats.forEach(function(c){q[c]=base;});
+  for(var i=0;i<rem;i++) q[shuffled[i]]++;
+  return q;
+}
+
 // ── наращивание кластера: контроль ПОПАРНОГО разброса ────────────
-function growCluster(seed,pool,cats,ptsN,maxD){
-  var picked=[seed], used={}; used[seed.n]=1;
+function growCluster(seed,pool,cats,ptsN,maxD,quotas){
+  var picked=[seed], used={}, cnt={};
+  used[seed.n]=1; cnt[seed.c]=1;
   // кандидаты: всё в пределах maxD от seed (надмножество любого валидного кластера)
   var near=pool.filter(function(p){
     return !used[p.n] && hav(seed.la,seed.lo,p.la,p.lo)<=maxD;
@@ -426,20 +447,24 @@ function growCluster(seed,pool,cats,ptsN,maxD){
     return (best&&bd<=maxD)?best:null;
   }
 
-  // фаза 1: закрыть каждую выбранную категорию
+  // фаза 1: закрыть каждую выбранную рубрику хотя бы одним местом
   var missing=cats.filter(function(c){return c!==seed.c;});
   for(var m=0;m<missing.length;m++){
     if(picked.length>=ptsN) break;
     var add=bestAddition(near.filter(function(p){return p.c===missing[m];}));
     if(!add) return null;              // в бюджет не влезает — кластер невалиден
-    picked.push(add); used[add.n]=1;
+    picked.push(add); used[add.n]=1; cnt[add.c]=(cnt[add.c]||0)+1;
   }
 
-  // фаза 2: добить до нужного числа, минимально раздувая разброс
+  // фаза 2: добор по квотам — не сваливать всё в одну рубрику
   while(picked.length<ptsN){
-    var a2=bestAddition(near);
+    var under=cats.filter(function(c){return (cnt[c]||0)<(quotas[c]||0);});
+    var a2=under.length
+      ? bestAddition(near.filter(function(p){return under.indexOf(p.c)!==-1;}))
+      : null;
+    if(!a2) a2=bestAddition(near);     // квоты исчерпаны или мест нет — берём любое
     if(!a2) break;
-    picked.push(a2); used[a2.n]=1;
+    picked.push(a2); used[a2.n]=1; cnt[a2.c]=(cnt[a2.c]||0)+1;
   }
   return picked;
 }
@@ -452,6 +477,9 @@ function pickCluster(pool,cfg){
   var cats=Object.keys(sc);
   var ptsN=Math.min(pts,pool.length);
   if(!pool.length) return [];
+  // штраф за одинаковые рубрики подряд — соразмерен масштабу прогулки
+  window._catPenalty=Math.round(cfg.target*0.25);
+  var quotas=catQuotas(cats,ptsN);
 
   // якорь
   var anchorLa=null,anchorLo=null;
@@ -480,12 +508,16 @@ function pickCluster(pool,cfg){
     var maxD=ladder[li], best=null, bestScore=Infinity;
 
     for(var si=0;si<seeds.length;si++){
-      var cl=growCluster(seeds[si],pool,cats,ptsN,maxD);
+      var cl=growCluster(seeds[si],pool,cats,ptsN,maxD,quotas);
       if(!cl||cl.length<Math.min(2,ptsN)) continue;
       var ordered=orderRoute(cl,anchorLa,anchorLo);
       // цель — попасть в масштаб прогулки, а не сжать всё в один двор
       var L=pathLen(ordered);
       var score=Math.abs(L-cfg.target)+(ptsN-cl.length)*3000;
+      // перекос: сколько мест «лишних» относительно квоты
+      var have={}; ordered.forEach(function(p){have[p.c]=(have[p.c]||0)+1;});
+      var skew=0; cats.forEach(function(c){skew+=Math.max(0,(have[c]||0)-(quotas[c]||0));});
+      score+=skew*cfg.target*0.4+sameCatRuns(ordered)*cfg.target*0.3;
       if(L<cfg.target*0.35) score+=(cfg.target*0.35-L)*1.2;   // слишком кучно — скучно
       if(anchorLa!==null) score+=hav(anchorLa,anchorLo,ordered[0].la,ordered[0].lo)*1.5;
       if(score<bestScore){bestScore=score;best=ordered;}
@@ -603,6 +635,7 @@ function swapPlace(idx, btn){
   var newPlace = pool[0];
   var newPicked = last._picked.slice();
   newPicked[idx] = newPlace;
+  window._catPenalty=Math.round(DUR[dur].target*0.25);
   newPicked = orderRoute(newPicked, null, null);
   idx = newPicked.indexOf(newPlace);
 
