@@ -594,6 +594,22 @@ function updateRouteAfterSwap(){
   if(last._m) last._m.spread = spread;
 }
 
+// пересобрать stops в порядке picked и пересчитать время пешком
+function resyncStops(oldPicked, oldStops, newPicked, replacedName, newStop){
+  var byName={};
+  (oldPicked||[]).forEach(function(p,i){ if(oldStops&&oldStops[i]) byName[p.n]=oldStops[i]; });
+  if(replacedName) byName[replacedName]=newStop;
+  var out=newPicked.map(function(p){
+    return byName[p.n] || {name:p.n,detail:p.d,metro:(p.metro||[])[0]||'',walk:null};
+  });
+  out.forEach(function(s,i){
+    if(i===0){ s.walk=null; return; }
+    var d=hav(newPicked[i-1].la,newPicked[i-1].lo,newPicked[i].la,newPicked[i].lo);
+    s.walk=Math.max(1,Math.round(d/80))+' мин пешком';
+  });
+  return out;
+}
+
 function swapPlace(idx, btn){
   if(!last||!last._picked) return;
   btn.classList.add('spinning');
@@ -608,31 +624,47 @@ function swapPlace(idx, btn){
   var usedNames = {};
   last._picked.forEach(function(p){ usedNames[p.n] = 1; });
 
-  // try to find same category first, else any selected category
+  // рубрика не меняется никогда — только место внутри неё
   var pool = DB.filter(function(p){
     return p.c === currentCat && !usedNames[p.n];
   });
   if(!pool.length){
-    pool = DB.filter(function(p){ return cats.indexOf(p.c)!==-1 && !usedNames[p.n]; });
+    btn.classList.remove('spinning');
+    btn.textContent='нет замены';
+    setTimeout(function(){ btn.textContent='\u21ba заменить'; }, 1800);
+    return;
   }
 
-  // prefer nearby places using anchor from last route
-  var anchorLa = currentPick ? currentPick.la : null;
-  var anchorLo = currentPick ? currentPick.lo : null;
-  var others = last._picked.filter(function(p,i){ return i!==idx; });
-  var budget = DUR[dur].maxD;
+  var anchorLa = currentPick.la, anchorLo = currentPick.lo;
+  var others   = last._picked.filter(function(p,i){ return i!==idx; });
+  var budget   = DUR[dur].maxD;
+
+  // если выбрано метро — не уходим от станции дальше, чем ушла исходная точка
+  var mc = window._MC||{}, mLa=null, mLo=null;
+  for(var mi=0;mi<metro.length;mi++){ if(mc[metro[mi]]){ mLa=mc[metro[mi]][0]; mLo=mc[metro[mi]][1]; break; } }
+  var srcMetroDist = mLa!==null ? hav(mLa,mLo,anchorLa,anchorLo) : null;
+
+  // оценка кандидата: близость к заменяемому месту + рост разброса маршрута
+  function swapScore(p){
+    var near = hav(anchorLa,anchorLo,p.la,p.lo);
+    var grow = Math.max(0, diameter(others.concat([p])) - diameter(others.concat([currentPick])));
+    var s = near + grow*1.5;
+    if(srcMetroDist!==null){
+      var dm = hav(mLa,mLo,p.la,p.lo);
+      if(dm > srcMetroDist + 400) s += (dm - srcMetroDist)*2;
+    }
+    return s;
+  }
+
+  // сначала те, что укладываются в бюджет всего маршрута
   var fits = pool.filter(function(p){ return diameter(others.concat([p])) <= budget; });
-  if(fits.length) pool = fits;
-  else if(anchorLa) pool.sort(function(a,b){
-    return diameter(others.concat([a])) - diameter(others.concat([b]));
-  });
-  pool = pool.slice(0, Math.min(12, pool.length)).sort(function(){ return Math.random()-.5; });
+  var cand = fits.length ? fits : pool;
 
-  if(!pool.length){
-    btn.classList.remove('spinning'); btn.textContent='\u21ba заменить'; return;
-  }
+  cand = cand.slice().sort(function(a,b){ return swapScore(a)-swapScore(b); });
 
-  var newPlace = pool[0];
+  // случайный из нескольких ближайших — чтобы кнопка давала разное, но рядом
+  var topN = Math.min(cand.length, cand.length > 3 ? 5 : cand.length);
+  var newPlace = cand[Math.floor(Math.random()*topN)];
   var newPicked = last._picked.slice();
   newPicked[idx] = newPlace;
   window._catPenalty=Math.round(DUR[dur].target*0.25);
@@ -658,18 +690,16 @@ function swapPlace(idx, btn){
     var raw=(d.content||[]).map(function(b){return b.text||'';}).join('').split('```json').join('').split('```').join('').trim();
     var mx=raw.match(/\{[\s\S]*\}/); 
     var stop = mx ? JSON.parse(mx[0]) : {name:newPlace.n, detail:newPlace.d, metro:(newPlace.metro||[])[0]||'', walk:null};
+    last.stops   = resyncStops(last._picked, last.stops, newPicked, newPlace.n, stop);
     last._picked = newPicked;
-    if(last.stops && last.stops[idx]) last.stops[idx] = stop;
-    renderStop(idx, stop, btn.parentNode);
-    updateRouteAfterSwap();
+    window._silentRender=true; render(last); window._silentRender=false;
   })
   .catch(function(){
     // fallback: just swap without rewriting
     var stop = {name:newPlace.n, detail:newPlace.d, metro:(newPlace.metro||[])[0]||'', walk:null};
+    last.stops   = resyncStops(last._picked, last.stops, newPicked, newPlace.n, stop);
     last._picked = newPicked;
-    if(last.stops && last.stops[idx]) last.stops[idx] = stop;
-    renderStop(idx, stop, btn.parentNode);
-    updateRouteAfterSwap();
+    window._silentRender=true; render(last); window._silentRender=false;
   })
   .finally(function(){
     btn.classList.remove('spinning'); btn.textContent='\u21ba заменить';
@@ -791,7 +821,7 @@ function render(r){
     document.getElementById('yMapBtn').style.display='flex';
   }
   var rc=document.getElementById('result');rc.style.display='block';
-  setTimeout(function(){rc.scrollIntoView({behavior:'smooth',block:'nearest'});},100);
+  if(!window._silentRender) setTimeout(function(){rc.scrollIntoView({behavior:'smooth',block:'nearest'});},100);
 }
 
 document.getElementById('shareBtn').addEventListener('click',function(){
