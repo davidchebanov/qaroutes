@@ -151,19 +151,19 @@ input[type=range]::-moz-range-thumb{width:15px;height:15px;border:none;border-ra
 .rtitle{font-family:var(--display);font-size:20px;font-weight:700;letter-spacing:-.045em;line-height:1.2;margin-bottom:20px}
 
 /* ── stops ── */
-.stop-wrap{position:relative;border-top:1px solid var(--line-soft)}
+.stop-wrap{position:relative;border-top:1px solid var(--line)}
 .stop-wrap:first-child{border-top:none}
-.stop{display:flex;gap:13px;padding:15px 0}
-.stop-wrap .stop{padding-right:44px}
-.snum{font-family:var(--display);font-size:11px;font-weight:600;color:var(--muted);flex-shrink:0;width:18px;padding-top:3px;letter-spacing:-.02em}
+.stop{display:flex;gap:14px;padding:20px 0}
+.stop-wrap .stop{padding-right:46px}
+.snum{font-family:var(--display);font-size:13px;font-weight:700;color:var(--accent);flex-shrink:0;width:20px;padding-top:2px;letter-spacing:-.03em}
 .sinfo{flex:1;min-width:0}
-.sname{font-size:16px;font-weight:500;letter-spacing:-.025em;line-height:1.25}
-.sdet{font-size:13px;color:var(--muted);margin-top:5px;line-height:1.5;letter-spacing:-.005em}
-.smeta{display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;align-items:center}
+.sname{font-size:16.5px;font-weight:600;letter-spacing:-.03em;line-height:1.25}
+.sdet{font-size:13px;color:var(--muted);margin-top:6px;line-height:1.55;letter-spacing:-.005em}
+.smeta{display:flex;gap:12px;margin-top:11px;flex-wrap:wrap;align-items:center}
 .sm-m,.sm-w{font-size:11px;font-weight:400;letter-spacing:-.01em;color:var(--muted);background:none;padding:0}
 .sm-m{color:var(--ink);font-weight:500}
 .swap-btn{
-  position:absolute;top:15px;right:0;background:none;border:none;padding:2px 0;
+  position:absolute;top:20px;right:0;background:none;border:none;padding:2px 0;
   font-size:11px;font-weight:400;letter-spacing:-.01em;color:var(--muted);
   cursor:pointer;transition:color .15s;border-bottom:1px solid transparent;font-family:var(--sans);
 }
@@ -281,16 +281,25 @@ var DUR = [
 ];
 
 var sc = {}, metro = [], dur = 0, pts = 3, last = null;
+// что показывали в последних маршрутах — чтобы «другой» давал другое
+var recent = [];
+function rememberRoute(r){
+  r.forEach(function(p){ recent.push(p.n); });
+  if(recent.length>26) recent = recent.slice(recent.length-26);
+}
+function recentPenalty(r){
+  var n=0;
+  r.forEach(function(p){
+    var i=recent.lastIndexOf(p.n);
+    if(i>=0) n += 1 - (recent.length-1-i)/recent.length;  // свежее — больнее
+  });
+  return n;
+}
 
 function hav(la1,lo1,la2,lo2){
   var R=6371000,dlat=(la2-la1)*Math.PI/180,dlon=(lo2-lo1)*Math.PI/180;
   var a=Math.sin(dlat/2)*Math.sin(dlat/2)+Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dlon/2)*Math.sin(dlon/2);
   return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
-}
-function maxSpread(pts){
-  var max=0;
-  for(var i=0;i<pts.length;i++)for(var j=i+1;j<pts.length;j++){var d=hav(pts[i].la,pts[i].lo,pts[j].la,pts[j].lo);if(d>max)max=d;}
-  return max;
 }
 
 (function(){
@@ -304,6 +313,7 @@ function maxSpread(pts){
       var k=el.dataset.c;
       if(sc[k]){if(Object.keys(sc).length===1)return;delete sc[k];el.classList.remove('on');}
       else{sc[k]=1;el.classList.add('on');}
+      recent=[];   // фильтры изменились — прошлые подборки не в счёт
     });
     g.appendChild(el);
   });
@@ -325,6 +335,7 @@ function rDrop(q){
 mDrop.addEventListener('mousedown',function(e){
   var o=e.target.closest('.mopt');if(!o)return;e.preventDefault();
   var s=o.getAttribute('data-s');if(metro.indexOf(s)===-1)metro.push(s);
+  recent=[];
   mIn.value='';mDrop.classList.remove('show');rTags();
 });
 mIn.addEventListener('input', function(){rDrop(this.value.trim().toLowerCase());});
@@ -335,12 +346,12 @@ function rTags(){
     return '<div class="mtag">м. '+s+'<button class="mtag-x" data-s="'+s.replace(/"/g,'&quot;')+'">&#215;</button></div>';
   }).join('');
   mTags.querySelectorAll('.mtag-x').forEach(function(x){
-    x.addEventListener('click',function(){metro=metro.filter(function(m){return m!==x.getAttribute('data-s');});rTags();});
+    x.addEventListener('click',function(){metro=metro.filter(function(m){return m!==x.getAttribute('data-s');});recent=[];rTags();});
   });
 }
 
 function setDur(d){
-  dur=d;
+  dur=d; recent=[];
   document.querySelectorAll('.dur-step').forEach(function(el){el.classList.toggle('on',+el.dataset.d===d);});
   document.getElementById('durLabel').textContent=DUR[d].label;
   document.getElementById('durHint').textContent=DUR[d].hint+' · '+pts+' мест';
@@ -349,7 +360,7 @@ function setDur(d){
 
 
 document.getElementById('ptsR').addEventListener('input',function(){
-  pts=+this.value;document.getElementById('ptsV').textContent=this.value;
+  pts=+this.value;recent=[];document.getElementById('ptsV').textContent=this.value;
 });
 // ── геометрия маршрута ────────────────────────────────────────────
 function pathLen(a){
@@ -505,7 +516,7 @@ function pickCluster(pool,cfg){
   var ladder=[cfg.maxD, cfg.maxD*1.7, cfg.maxD*2.8, 999999];
 
   for(var li=0;li<ladder.length;li++){
-    var maxD=ladder[li], best=null, bestScore=Infinity;
+    var maxD=ladder[li], cands=[];
 
     for(var si=0;si<seeds.length;si++){
       var cl=growCluster(seeds[si],pool,cats,ptsN,maxD,quotas);
@@ -520,7 +531,21 @@ function pickCluster(pool,cfg){
       score+=skew*cfg.target*0.4+sameCatRuns(ordered)*cfg.target*0.3;
       if(L<cfg.target*0.35) score+=(cfg.target*0.35-L)*1.2;   // слишком кучно — скучно
       if(anchorLa!==null) score+=hav(anchorLa,anchorLo,ordered[0].la,ordered[0].lo)*1.5;
-      if(score<bestScore){bestScore=score;best=ordered;}
+      // штраф за недавно показанные места
+      score+=recentPenalty(ordered)*cfg.target*0.55;
+      // отсеиваем кластеры из тех же мест, что уже набраны
+      var key=ordered.map(function(p){return p.n;}).sort().join('|');
+      if(!cands.some(function(c){return c.key===key;})) cands.push({r:ordered,score:score,key:key});
+    }
+
+    // случайный из нескольких лучших — разнообразие без потери компактности
+    var best=null;
+    if(cands.length){
+      cands.sort(function(a,b){return a.score-b.score;});
+      var topK=Math.min(cands.length, cands.length>=4?4:cands.length);
+      // смещение к лучшим: квадрат случайного числа
+      var pickIdx=Math.floor(Math.random()*Math.random()*topK);
+      best=cands[pickIdx].r;
     }
 
     // неполный набор принимаем только когда лестница исчерпана
@@ -552,47 +577,6 @@ function pickCluster(pool,cfg){
 
 // ── swap single place ─────────────────────────────────────────────
 
-function updateRouteAfterSwap(){
-  if(!last || !last._picked) return;
-  var picked = last._picked;
-
-  // update yandex map link
-  if(picked.length >= 2){
-    document.getElementById('yMapBtn').href =
-      'https://yandex.ru/maps/?rtext=' +
-      picked.map(function(p){return p.la+','+p.lo;}).join('~') +
-      '&rtt=pd';
-    document.getElementById('yMapBtn').style.display = 'flex';
-  }
-
-  // update spread badge
-  var spread = Math.round(pathLen(picked));
-  var spreadKm = Math.round(spread/100)/10;
-  var rbs = document.getElementById('rBs');
-  if(rbs){
-    // find and update the km badge
-    var badges = rbs.querySelectorAll('.rb');
-    var updated = false;
-    badges.forEach(function(b){
-      if(b.textContent.indexOf('км') !== -1){
-        b.textContent = '~' + spreadKm + ' км';
-        updated = true;
-      }
-    });
-    // if no km badge yet — add one
-    if(!updated && spreadKm > 0){
-      var span = document.createElement('span');
-      span.className = 'rb';
-      span.style.background = 'var(--bg2)';
-      span.style.color = 'var(--muted)';
-      span.textContent = '~' + spreadKm + ' км';
-      rbs.appendChild(span);
-    }
-  }
-
-  // update last._m spread
-  if(last._m) last._m.spread = spread;
-}
 
 // пересобрать stops в порядке picked и пересчитать время пешком
 function resyncStops(oldPicked, oldStops, newPicked, replacedName, newStop){
@@ -706,17 +690,6 @@ function swapPlace(idx, btn){
   });
 }
 
-function renderStop(idx, s, wrapEl){
-  var el = wrapEl.querySelector('.stop');
-  if(!el) return;
-  el.innerHTML='<div class="snum">'+(idx+1)+'</div><div class="sinfo">'
-    +'<div class="sname">'+(s.name||'')+'</div>'
-    +'<div class="sdet">'+(s.detail||'')+'</div>'
-    +'<div class="smeta">'
-    +(s.metro&&s.metro!=='null'&&s.metro!==''?'<span class="sm-m">м. '+s.metro+'</span>':'')
-    +(s.walk&&s.walk!=='null'?'<span class="sm-w">'+s.walk+'</span>':'')
-    +'</div></div>';
-}
 
 
 function gen(){
@@ -726,6 +699,7 @@ function gen(){
   var cats=Object.keys(sc),cfg=DUR[dur];
   var pool=DB.filter(function(p){return cats.indexOf(p.c)!==-1;});
   var picked=pickCluster(pool,cfg);
+  rememberRoute(picked);
   if(picked.length<2){
     var used2={};picked.forEach(function(p){used2[p.n]=1;});
     DB.filter(function(p){return cats.indexOf(p.c)!==-1;}).sort(function(){return Math.random()-.5;})
