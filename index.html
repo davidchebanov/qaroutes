@@ -630,10 +630,13 @@ function pickCluster(pool,cfg){
     // заметно больше разных маршрутов при той же компактности
     seeds=pool.slice().sort(function(a,b){
       return hav(anchorLa,anchorLo,a.la,a.lo)-hav(anchorLa,anchorLo,b.la,b.lo);
-    }).slice(0,60).sort(function(){return Math.random()-.5;}).slice(0,18);
+    }).slice(0,90).sort(function(){return Math.random()-.5;}).slice(0,26);
   }else{
     seeds=pool.slice().sort(function(){return Math.random()-.5;}).slice(0,26);
   }
+
+  // стартовая точка должна быть в пешей доступности от выбранной станции
+  var START_MAX=900;
 
   // лестница бюджетов: жёсткий → мягче → совсем мягкий
   var ladder=[cfg.maxD, cfg.maxD*1.7, cfg.maxD*2.8, 999999];
@@ -660,7 +663,13 @@ function pickCluster(pool,cfg){
         var outside=hav(cLa/ordered.length,cLo/ordered.length,CORE_LA,CORE_LO)-CORE_R;
         if(outside>0) score+=outside*(dur===2?0.45:1.1);
       }
-      if(anchorLa!==null) score+=hav(anchorLa,anchorLo,ordered[0].la,ordered[0].lo)*1.5;
+      if(anchorLa!==null){
+        var d0=hav(anchorLa,anchorLo,ordered[0].la,ordered[0].lo);
+        // станцию выбрали — значит от неё и стартуем. на длинных маршрутах
+        // масштаб прогулки раньше перебивал близость к станции
+        if(li<2 && d0>START_MAX) continue;
+        score+=d0*(cfg.target>3000?6:1.5);
+      }
       // штраф за недавно показанные места
       score+=recentPenalty(ordered)*cfg.target*0.55;
       // отсеиваем кластеры из тех же мест, что уже набраны
@@ -688,7 +697,7 @@ function pickCluster(pool,cfg){
       // БАГ 2: кластер компактный, но далеко от выбранной станции
       if(anchorLa!==null){
         var dAnchor=hav(anchorLa,anchorLo,best[0].la,best[0].lo);
-        if(dAnchor>2500){window._usedFallback=true;window._fallbackReason='far';}
+        if(dAnchor>START_MAX*1.6){window._usedFallback=true;window._fallbackReason='far';}
       }
       return best;
     }
