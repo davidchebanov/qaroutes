@@ -786,7 +786,14 @@ function swapPlace(idx, btn){
   var newPicked = last._picked.slice();
   newPicked[idx] = newPlace;
   window._catPenalty=Math.round(DUR[dur].target*0.25);
-  newPicked = orderRoute(newPicked, null, null);
+  // порядок пересобираем от той же отправной точки, что и исходный маршрут:
+  // выбранная станция, а если её нет — первое место маршрута.
+  // иначе после замены начало уезжает на другой конец
+  var keepLa, keepLo;
+  if(mLa!==null){ keepLa=mLa; keepLo=mLo; }
+  else if(idx===0){ keepLa=newPlace.la; keepLo=newPlace.lo; }
+  else { keepLa=last._picked[0].la; keepLo=last._picked[0].lo; }
+  newPicked = orderRoute(newPicked, keepLa, keepLo);
   idx = newPicked.indexOf(newPlace);
 
   var stop = {name:newPlace.n, detail:trim2(newPlace.d),
