@@ -67,7 +67,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "привет!\n\n"
         "я собираю маршруты по москве из личной карты канала — "
-        "611 проверенных места: кофе, бары, галереи, парки, театры и не только.\n\n"
+        "612 проверенных мест: кофе, бары, галереи, парки, театры и не только.\n\n"
         "нажми кнопку ниже ✦",
         reply_markup=InlineKeyboardMarkup(kb),
     )
