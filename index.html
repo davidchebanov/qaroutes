@@ -477,7 +477,7 @@ function diameter(a){
   return m;
 }
 
-// ── порядок обхода: ближайший сосед + 2-opt ──────────────────────
+// ── порядок обхода: география + логика времени суток ─────────────
 function nnFrom(startIdx,a){
   var left=a.slice(), route=[left.splice(startIdx,1)[0]];
   while(left.length){
@@ -534,8 +534,23 @@ function breakRuns(r){
   return r;
 }
 
+// Быстрый режим без точных часов работы: рано закрывающиеся места идут
+// первыми, бары и клубно-музыкальные места — последними. Внутри каждой
+// фазы сохраняем рассчитанный географический порядок.
+function dayPhase(p){
+  if(['кофе','природа','галереи','шопинг','книги'].indexOf(p.c)!==-1) return 0;
+  if(['бар','музыка'].indexOf(p.c)!==-1) return 2;
+  return 1;
+}
+function applyDayOrder(r){
+  var phases=[[],[],[]];
+  r.forEach(function(p){phases[dayPhase(p)].push(p);});
+  return phases[0].concat(phases[1],phases[2]);
+}
+
 function orderRoute(a,anchorLa,anchorLo){
-  if(a.length<3) return a;
+  if(a.length<3) return applyDayOrder(a.slice());
+  var geo;
   // если задано метро — стартуем от ближайшей к станции точки
   if(anchorLa!==null&&anchorLa!==undefined){
     var si=0,sd=Infinity;
@@ -543,14 +558,16 @@ function orderRoute(a,anchorLa,anchorLo){
       var d=hav(anchorLa,anchorLo,a[i].la,a[i].lo);
       if(d<sd){sd=d;si=i;}
     }
-    return breakRuns(twoOpt(nnFrom(si,a)));
+    geo=breakRuns(twoOpt(nnFrom(si,a)));
+    return applyDayOrder(geo);
   }
   var best=null,bl=Infinity;
   for(var s=0;s<a.length;s++){
     var r=twoOpt(nnFrom(s,a)), l=routeCost(r);
     if(l<bl){bl=l;best=r;}
   }
-  return breakRuns(best);
+  geo=breakRuns(best);
+  return applyDayOrder(geo);
 }
 
 // ── квоты: сколько точек на рубрику ──────────────────────────────
