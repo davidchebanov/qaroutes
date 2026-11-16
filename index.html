@@ -207,7 +207,7 @@ input[type=range]::-moz-range-thumb{width:26px;height:26px;border:none;border-ra
 
 <div class="hdr">
   <div class="logo"><div class="logo-dot"></div><div class="logo-t">мои маршруты</div></div>
-  <div class="sub">613 мест (личная база)</div>
+  <div class="sub" id="placeCount"></div>
 </div>
 <main>
   <div class="lbl">что ищем</div>
@@ -273,6 +273,7 @@ input[type=range]::-moz-range-thumb{width:26px;height:26px;border:none;border-ra
 try{var tg=window.Telegram&&window.Telegram.WebApp;if(tg){tg.ready();tg.expand();}}catch(e){var tg=null;}
 
 var DB = JSON.parse(document.getElementById('j-db').textContent);
+document.getElementById('placeCount').textContent=DB.length+' мест (личная база)';
 var MA = JSON.parse(document.getElementById('j-metro').textContent);
 window._MC = JSON.parse(document.getElementById('j-mc').textContent);
 
@@ -549,18 +550,23 @@ function applyDayOrder(r){
 }
 
 function orderRoute(a,anchorLa,anchorLo){
-  if(a.length<3) return applyDayOrder(a.slice());
+  if(!a.length) return [];
   var geo;
   // если задано метро — стартуем от ближайшей к станции точки
   if(anchorLa!==null&&anchorLa!==undefined){
-    var si=0,sd=Infinity;
+    var si=0,sd=Infinity, phase=Infinity;
     for(var i=0;i<a.length;i++){
       var d=hav(anchorLa,anchorLo,a[i].la,a[i].lo);
-      if(d<sd){sd=d;si=i;}
+      // Среди точек в пешей доступности выбираем самую раннюю фазу.
+      // Если таких нет, ориентируемся на ближайшую точку вообще.
+      var p=dayPhase(a[i]);
+      if((d<=900 && (sd>900 || p<phase || (p===phase && d<sd))) ||
+         (d>900 && sd>900 && d<sd)){sd=d;si=i;phase=p;}
     }
     geo=breakRuns(twoOpt(nnFrom(si,a)));
-    return applyDayOrder(geo);
+    return [geo[0]].concat(applyDayOrder(geo.slice(1)));
   }
+  if(a.length<3) return applyDayOrder(a.slice());
   var best=null,bl=Infinity;
   for(var s=0;s<a.length;s++){
     var r=twoOpt(nnFrom(s,a)), l=routeCost(r);
@@ -649,7 +655,9 @@ function pickCluster(pool,cfg){
       for(var i=0;i<keep.length;i++) if(keep[i].c===c){ got++; if(got>=need) return true; }
       return got>=need;
     });
-    if(enough) pool=keep;
+    var mcRecent=window._MC||{}, station=metro.length?mcRecent[metro[0]]:null;
+    var keepsStart=!station || keep.some(function(p){return hav(station[0],station[1],p.la,p.lo)<=900;});
+    if(enough && keepsStart) pool=keep;
   }
 
   var ptsN=Math.min(pts,pool.length);
@@ -671,9 +679,11 @@ function pickCluster(pool,cfg){
   if(anchorLa!==null){
     // ближайшие 60 к станции, из них случайные 18 — широкий пул даёт
     // заметно больше разных маршрутов при той же компактности
-    seeds=pool.slice().sort(function(a,b){
+    var nearest=pool.slice().sort(function(a,b){
       return hav(anchorLa,anchorLo,a.la,a.lo)-hav(anchorLa,anchorLo,b.la,b.lo);
-    }).slice(0,90).sort(function(){return Math.random()-.5;}).slice(0,26);
+    });
+    var local=nearest.filter(function(p){return hav(anchorLa,anchorLo,p.la,p.lo)<=900;});
+    seeds=(local.length?local:nearest.slice(0,26)).slice().sort(function(){return Math.random()-.5;}).slice(0,26);
   }else{
     seeds=pool.slice().sort(function(){return Math.random()-.5;}).slice(0,26);
   }
@@ -710,7 +720,7 @@ function pickCluster(pool,cfg){
         var d0=hav(anchorLa,anchorLo,ordered[0].la,ordered[0].lo);
         // станцию выбрали — значит от неё и стартуем. на длинных маршрутах
         // масштаб прогулки раньше перебивал близость к станции
-        if(li<2 && d0>START_MAX) continue;
+        if(d0>START_MAX) continue;
         score+=d0*(cfg.target>3000?6:1.5);
       }
       // штраф за недавно показанные места
@@ -757,7 +767,13 @@ function pickCluster(pool,cfg){
     return hav(anchorLa,anchorLo,a.la,a.lo)-hav(anchorLa,anchorLo,b.la,b.lo);
   });
   else fb.sort(function(){return Math.random()-.5;});
-  return orderRoute(fb.slice(0,ptsN),anchorLa,anchorLo);
+  var unique=[], names={};
+  fb.forEach(function(p){if(unique.length<ptsN&&!names[p.n]){unique.push(p);names[p.n]=1;}});
+  var fallback=orderRoute(unique,anchorLa,anchorLo);
+  if(anchorLa!==null && fallback.length && hav(anchorLa,anchorLo,fallback[0].la,fallback[0].lo)<=START_MAX){
+    window._fallbackReason=fallback.length<ptsN?'fewplaces':'expanded';
+  }
+  return fallback;
 }
 
 
@@ -833,6 +849,10 @@ function swapPlace(idx, btn){
   // сначала те, что укладываются в бюджет всего маршрута
   var fits = pool.filter(function(p){ return diameter(others.concat([p])) <= budget; });
   var cand = fits.length ? fits : pool;
+  if(mLa!==null && !others.some(function(p){return hav(mLa,mLo,p.la,p.lo)<=900;})){
+    cand=cand.filter(function(p){return hav(mLa,mLo,p.la,p.lo)<=900;});
+    if(!cand.length){btn.classList.remove('spinning');btn.textContent='нет замены рядом';return;}
+  }
 
   cand = cand.slice().sort(function(a,b){ return swapScore(a)-swapScore(b); });
 
@@ -856,6 +876,7 @@ function swapPlace(idx, btn){
               metro:(newPlace.metro||[])[0]||'', walk:null};
   last.stops   = resyncStops(last._picked, last.stops, newPicked, newPlace.n, stop);
   last._picked = newPicked;
+  last._m.spread=Math.round(pathLen(newPicked));
   last.title   = makeTitle(newPicked);
   window._silentRender=true; render(last); window._silentRender=false;
   btn.classList.remove('spinning'); btn.textContent='\u21ba заменить';
@@ -868,12 +889,14 @@ function gen(){
   var cats=Object.keys(sc),cfg=DUR[dur];
   var pool=DB.filter(function(p){return cats.indexOf(p.c)!==-1;});
   var picked=pickCluster(pool,cfg);
-  rememberRoute(picked);
   if(picked.length<2){
     var used2={};picked.forEach(function(p){used2[p.n]=1;});
     DB.filter(function(p){return cats.indexOf(p.c)!==-1;}).sort(function(){return Math.random()-.5;})
       .forEach(function(p){if(picked.length<pts&&!used2[p.n]){picked.push(p);used2[p.n]=1;}});
   }
+  var startCoords=metro.length?(window._MC||{})[metro[0]]:null;
+  picked=orderRoute(picked,startCoords?startCoords[0]:null,startCoords?startCoords[1]:null);
+  rememberRoute(picked);
   var spread=Math.round(pathLen(picked));
 
   last={
