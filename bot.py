@@ -6,7 +6,7 @@ import os, time, logging, threading, urllib.request
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import AIORateLimiter, Application, CommandHandler, ContextTypes
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
@@ -79,9 +79,24 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-if __name__ == "__main__":
-    app = Application.builder().token(BOT_TOKEN).build()
+def build_application():
+    # Отправка ответа ждёт сеть: другие команды в это время обрабатываются.
+    # Лимитер ограничивает исходящие запросы и повторяет их после RetryAfter.
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .concurrent_updates(8)
+        .connection_pool_size(16)
+        .pool_timeout(10)
+        .rate_limiter(AIORateLimiter(overall_max_rate=25, max_retries=3))
+        .build()
+    )
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
+    return app
+
+
+if __name__ == "__main__":
+    app = build_application()
     log.info("bot started, polling…")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
