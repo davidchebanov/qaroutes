@@ -9,7 +9,8 @@ def block(name):
     return re.search(r'id="' + name + r'">(.*?)</script>', html, re.S).group(1)
 
 def section(start, end):
-    return html[html.index(start):html.index(end)]
+    begin = html.index(start)
+    return html[begin:html.index(end, begin)]
 
 source = 'var window={}; var DB=' + block('j-db') + '; window._MC=' + block('j-mc') + ';'
 source += section('var DUR =', 'function rememberRoute')
@@ -17,9 +18,10 @@ source += section('function rememberRoute', '// описание автора')
 source += section('function hav(', '(function(){')
 source += 'var CORE_LA=55.75249,CORE_LO=37.61536,CORE_R=3400; function saveRecent(){};'
 source += section('function pathLen(', '// ── swap single place')
-source += section('function resyncStops(', 'function gen(){')
+source += section('function resyncStops(', 'async function gen(){')
+source += 'async function checkSubscription(){return true;}'
 source += 'function trim2(s){return s;} function makeTitle(){return "";} function render(){};'
-source += r'''
+source += r'''(async function(){
 var seed=42; Math.random=function(){seed=(seed*1664525+1013904223)>>>0;return seed/4294967296;};
 var total=0,examples=[],far=0,otherMetro=0,duplicates=0,phaseErrors=0,mutations=0;
 var scenarios=[['еда','кофе'],['кофе','бар'],['еда','природа','бар']];
@@ -60,7 +62,7 @@ for(var trial=0;trial<20;trial++){
   var initial=pickCluster(swapPool,DUR[dur]);
   last={_picked:initial,stops:initial.map(function(p){return {name:p.n};}),_m:{spread:0}};
   for(var idx=0;idx<3;idx++){
-    swapPlace(idx,button);
+    await swapPlace(idx,button);
     if(hav(a[0],a[1],last._picked[0].la,last._picked[0].lo)>900) throw new Error('Swap displaced start');
     if(last.stops.some(function(st,i){return st.name!==last._picked[i].n;})) throw new Error('Stops out of sync');
     swaps++;
@@ -70,5 +72,6 @@ print(JSON.stringify({total:total,selectionMutations:mutations,startsOver900m:fa
  swapChecks:swaps,
  differentFirstPlaceMetro:otherMetro,duplicates:duplicates,phaseErrors:phaseErrors,
  anchorRegression:ordered.map(function(p){return p.n;}),examples:examples},null,2));
+})().catch(function(e){print(e);quit(1);});
 '''
 subprocess.run(['/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc', '-e', source], check=True)

@@ -209,7 +209,12 @@ input[type=range]::-moz-range-thumb{width:26px;height:26px;border:none;border-ra
   <div class="logo"><div class="logo-dot"></div><div class="logo-t">мои маршруты</div></div>
   <div class="sub" id="placeCount"></div>
 </div>
-<main>
+<div id="subscriptionGate" style="padding:24px;max-width:500px;margin:auto" role="status">
+  <p id="subscriptionMessage">проверяем подписку на канал «мои маршруты»…</p>
+  <p><a href="https://t.me/qaroutes" target="_blank">подписаться на канал</a></p>
+  <button id="subscriptionRetry" type="button">проверить подписку</button>
+</div>
+<main id="routeApp" hidden>
   <div class="lbl">что ищем</div>
   <div class="cats" id="catsGrid"></div>
   <div class="lbl">откуда начинаем</div>
@@ -271,6 +276,46 @@ input[type=range]::-moz-range-thumb{width:26px;height:26px;border:none;border-ra
 </main>
 <script>
 try{var tg=window.Telegram&&window.Telegram.WebApp;if(tg){tg.ready();tg.expand();}}catch(e){var tg=null;}
+
+var subscriptionBusy=false;
+async function checkSubscription(){
+  if(subscriptionBusy) return false;
+  subscriptionBusy=true;
+  var gate=document.getElementById('subscriptionGate'),app=document.getElementById('routeApp');
+  var message=document.getElementById('subscriptionMessage');
+  var retry=document.getElementById('subscriptionRetry');
+  retry.disabled=true;
+  try{
+    var api=new URLSearchParams(location.search).get('api');
+    if(!api || !tg || !tg.initData){
+      message.textContent='открой генератор через новое сообщение /start в боте — нужна проверка подписки.';
+      app.hidden=true;gate.hidden=false;return false;
+    }
+    var controller=new AbortController(),timer=setTimeout(function(){controller.abort();},15000);
+    var response;
+    try{
+      response=await fetch(api.replace(/\/$/,'')+'/subscription',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({initData:tg.initData}),signal:controller.signal
+      });
+    }finally{clearTimeout(timer);}
+    if(!response.ok) throw new Error('check unavailable');
+    var result=await response.json(),allowed=result.subscribed===true;
+    app.hidden=!allowed;gate.hidden=allowed;
+    if(!allowed){
+      document.getElementById('result').style.display='none';
+      message.textContent='подпишись на канал «мои маршруты» и нажми «проверить подписку».';
+    }
+    return allowed;
+  }catch(e){
+    app.hidden=true;gate.hidden=false;
+    message.textContent='не получилось проверить подписку. попробуй ещё раз. если ошибка повторяется — открой /start заново.';
+    return false;
+  }finally{subscriptionBusy=false;retry.disabled=false;}
+}
+document.getElementById('subscriptionRetry').addEventListener('click',checkSubscription);
+document.addEventListener('visibilitychange',function(){if(!document.hidden)checkSubscription();});
+checkSubscription();
 
 var DB = JSON.parse(document.getElementById('j-db').textContent);
 document.getElementById('placeCount').textContent=DB.length+' мест (личная база)';
@@ -796,7 +841,8 @@ function resyncStops(oldPicked, oldStops, newPicked, replacedName, newStop){
   return out;
 }
 
-function swapPlace(idx, btn){
+async function swapPlace(idx, btn){
+  if(!await checkSubscription()) return;
   if(!last||!last._picked) return;
   btn.classList.add('spinning');
   btn.textContent='···';
@@ -882,7 +928,8 @@ function swapPlace(idx, btn){
   btn.classList.remove('spinning'); btn.textContent='\u21ba заменить';
 }
 
-function gen(){
+async function gen(){
+  if(!await checkSubscription()) return;
   var btn=document.getElementById('genBtn'),sp=document.getElementById('spin'),gt=document.getElementById('genTxt'),rc=document.getElementById('result');
   btn.disabled=true;sp.style.display='block';gt.style.display='none';rc.style.display='none';
   try{if(tg&&tg.HapticFeedback)tg.HapticFeedback.impactOccurred('light');}catch(e){}
